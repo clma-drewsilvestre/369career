@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fffaf8;
+  --foreground: #201a17;
+  --accent: #ff5a3c;
+  --accent-dark: #e0431f;
+  --accent-tint: #fff0eb;
+  --muted: #8a7f7a;
+  --border: #f0e4de;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-dark: var(--accent-dark);
+  --color-accent-tint: var(--accent-tint);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --font-sans: var(--font-sans);
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
