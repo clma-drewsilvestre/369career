@@ -6,7 +6,7 @@ export default function EndPage() {
       moment="end"
       webhookUrl={process.env.NEXT_PUBLIC_MAKE_WEBHOOK_END}
       title="369 Career Readiness Snapshot"
-      description="One more 2-minute check-in, now that the workshop is wrapping up."
+      description="One more 90-second check-in, now that the workshop is wrapping up."
       includeBatch
       includeTrack={false}
       resultHeading="Your Finishing Snapshot"

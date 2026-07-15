@@ -2,6 +2,7 @@ const QUEUE_KEY = "369-webhook-queue";
 const TIMEOUT_MS = 5000;
 
 export interface WebhookPayload {
+  submissionId: string;
   moment: "start" | "end";
   name: string;
   email: string;
@@ -15,10 +16,21 @@ export interface WebhookPayload {
   system: number;
 }
 
+/** Payload as built by the UI — submissionId is stamped by sendToWebhook. */
+export type OutgoingPayload = Omit<WebhookPayload, "submissionId">;
+
 interface QueuedItem {
+  id: string;
   url: string;
   payload: WebhookPayload;
   queuedAt: string;
+}
+
+function makeId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function readQueue(): QueuedItem[] {
@@ -40,10 +52,13 @@ function writeQueue(items: QueuedItem[]): void {
   }
 }
 
-function enqueue(url: string, payload: WebhookPayload): void {
-  const items = readQueue();
-  items.push({ url, payload, queuedAt: new Date().toISOString() });
-  writeQueue(items);
+function enqueue(item: QueuedItem): void {
+  writeQueue([...readQueue(), item]);
+}
+
+/** Remove by id against the FRESH queue state, never a stale snapshot. */
+function removeFromQueue(id: string): void {
+  writeQueue(readQueue().filter((item) => item.id !== id));
 }
 
 async function postWithTimeout(url: string, payload: WebhookPayload): Promise<boolean> {
@@ -55,6 +70,9 @@ async function postWithTimeout(url: string, payload: WebhookPayload): Promise<bo
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       signal: controller.signal,
+      // Lets the request survive the page being backgrounded/closed —
+      // participants lock their phone right after the score reveal.
+      keepalive: true,
     });
     return res.ok;
   } catch {
@@ -65,32 +83,49 @@ async function postWithTimeout(url: string, payload: WebhookPayload): Promise<bo
 }
 
 /**
- * Fire-and-forget: never await this in the UI. Queues the payload in
- * localStorage on failure so it can be retried on the next page load.
+ * Fire-and-forget: never await this in the UI.
+ *
+ * Write-ahead delivery: the payload is queued in localStorage BEFORE the
+ * request goes out and removed only on confirmed success, so a killed page
+ * or failed request can never lose it — worst case it is re-sent on the
+ * next page load. The stamped submissionId makes re-sends safe to dedupe
+ * downstream (same submission ⇒ same id).
  */
-export function sendToWebhook(url: string | undefined, payload: WebhookPayload): void {
+export function sendToWebhook(url: string | undefined, outgoing: OutgoingPayload): void {
   if (!url) return;
+  const payload: WebhookPayload = { ...outgoing, submissionId: makeId() };
+  const item: QueuedItem = {
+    id: payload.submissionId,
+    url,
+    payload,
+    queuedAt: new Date().toISOString(),
+  };
+  enqueue(item);
   postWithTimeout(url, payload).then((ok) => {
-    if (!ok) enqueue(url, payload);
+    if (ok) removeFromQueue(item.id);
   });
 }
+
+let retryInFlight = false;
 
 /**
  * Attempts to resend any queued payloads from a previous failed submission.
  * Safe to call on every page load; it's a no-op when the queue is empty.
+ * Each success removes only its own item from the live queue, so items
+ * enqueued while retries are in flight are never clobbered.
  */
 export function retryQueuedWebhooks(): void {
+  if (retryInFlight) return;
   const items = readQueue();
   if (items.length === 0) return;
+  retryInFlight = true;
 
-  const remaining: QueuedItem[] = [];
   let settled = 0;
-
   items.forEach((item) => {
     postWithTimeout(item.url, item.payload).then((ok) => {
-      if (!ok) remaining.push(item);
+      if (ok) removeFromQueue(item.id);
       settled += 1;
-      if (settled === items.length) writeQueue(remaining);
+      if (settled === items.length) retryInFlight = false;
     });
   });
 }

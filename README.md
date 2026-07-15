@@ -67,6 +67,7 @@ Both `/start` and `/end` POST the same JSON shape to their respective webhook, w
 
 ```json
 {
+  "submissionId": "6f1d2c3e-8a4b-4c5d-9e6f-7a8b9c0d1e2f",
   "moment": "start",
   "name": "Juan Dela Cruz",
   "email": "juan@email.com",
@@ -82,6 +83,13 @@ Both `/start` and `/end` POST the same JSON shape to their respective webhook, w
 ```
 
 `track` is `null` on `/end` submissions; `batch` is collected on both `/start` and `/end`.
+
+Delivery is **at-least-once**: if a request times out on bad venue wifi but was
+actually received, the client may re-send it on a later page load. Every
+attempt for the same submission carries the same `submissionId`, so duplicates
+are trivially filtered in Make (a `submissionId` router/filter) or in Sheets
+(`COUNTIF` on the `submissionId` column). Emails are trimmed and lowercased
+client-side so `/start` and `/end` rows join cleanly.
 
 ## Deploying to Vercel
 
@@ -113,8 +121,48 @@ Both routes work standalone with no query params, so any static QR code generato
 
 ## Notes on the offline/queue behavior
 
-If a webhook POST fails (bad wifi, Make.com hiccup, etc.), the result screen still shows
-immediately — scoring is entirely client-side and doesn't depend on the webhook
-succeeding. The failed payload is queued in `localStorage` and automatically retried the
-next time any `/start` or `/end` page loads on that device. This is silent by design; it
-never blocks or alarms the person taking the assessment.
+The result screen always shows immediately — scoring is entirely client-side and doesn't
+depend on the webhook succeeding. Delivery uses a **write-ahead queue**: every payload is
+saved to `localStorage` *before* the request is sent (with `keepalive`, so it survives the
+phone being locked right after the reveal) and removed only on confirmed success. Anything
+still queued is retried silently the next time any `/start` or `/end` page loads on that
+device. In-progress answers are also kept in `sessionStorage`, so an accidental refresh
+resumes at the same question instead of restarting.
+
+## Running a live event (80–100 participants)
+
+The app itself is static and scales effortlessly; the checklist below is about the
+downstream pipeline:
+
+1. **Make.com scenarios ON and healthy** — confirm both scenarios are enabled and that
+   scenario settings have auto-retry enabled ("Allow storing of incomplete executions" +
+   retry), so a Google Sheets hiccup doesn't drop a submission.
+2. **Ops budget** — each participant fires 2 webhooks (start + end). 100 participants ≈
+   200 scenario runs; multiply by modules per scenario and check it fits your Make plan's
+   monthly operations.
+3. **Sheets write quota** — Google Sheets allows roughly 60 writes/min; a 2–3 minute burst
+   from 100 phones queues up inside Make and drains automatically. Expect rows to trail
+   the live moment by a few minutes; this is normal.
+4. **Dedupe** — filter duplicates by `submissionId` (see payload section). Duplicates are
+   rare and expected by design (at-least-once delivery beats losing data).
+5. **Smoke test** — before doors open: submit one real test on `/start` and one on `/end`
+   from a phone on the venue wifi, and confirm both rows land in the Sheet. Delete the
+   test rows after.
+6. **QR fallback** — keep the URLs (`/start`, `/end`) written on a slide/whiteboard in
+   case a phone camera won't scan.
+
+## Next stage (roadmap)
+
+1. **Week 3/6/9 re-scans (Gate 3/6/9)** — new route reusing `AssessmentFlow` with
+   `moment: "week3" | "week6" | "week9"`; links sent by Make email/SMS scheduler.
+2. **Score history** — store submissions in a real datastore (Supabase is the natural
+   fit), match by email, and show each graduate their Gate 0 → 9 progression line.
+3. **Facilitator live dashboard** — live submission count and batch averages during the
+   seminar.
+4. **Taglish language toggle** — `lib/questions.ts` is already externalized for a drop-in
+   translated variant.
+5. **PWA/offline caching** — service worker so the app opens even on dead venue wifi.
+6. **Result-screen score bands** — short "what your score means" copy under the ring.
+7. **Automated cadence messaging** — Make scheduler sends the Week 3/6/9 links
+   automatically from the Sheet.
+8. **Vercel Analytics** — funnel visibility (landing → start → complete).

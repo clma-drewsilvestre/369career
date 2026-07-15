@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QUESTIONS, type Answers, type QuestionId } from "@/lib/questions";
 import { computeScores } from "@/lib/scoring";
 import { retryQueuedWebhooks, sendToWebhook } from "@/lib/webhook";
@@ -34,6 +34,16 @@ interface FormState {
   track: string;
 }
 
+interface Draft {
+  step: Step;
+  questionIndex: number;
+  form: FormState;
+  answers: Partial<Answers>;
+}
+
+/** Answering advances after a short delay; questions are one per screen. */
+const ADVANCE_MS = 180;
+
 export default function AssessmentFlow({
   moment,
   webhookUrl,
@@ -51,9 +61,50 @@ export default function AssessmentFlow({
   const [answers, setAnswers] = useState<Partial<Answers>>({});
   const [scores, setScores] = useState<ReturnType<typeof computeScores> | null>(null);
 
+  // Blocks double-taps during the answer -> advance transition. A second tap
+  // inside the window would otherwise advance twice (skipping a question) or
+  // submit twice on the final question.
+  const advancingRef = useRef(false);
+
+  const draftKey = `369-draft-${moment}`;
+
   useEffect(() => {
     retryQueuedWebhooks();
   }, []);
+
+  // Restore an in-progress assessment after an accidental refresh.
+  // Runs once on mount (post-hydration, so no SSR mismatch).
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(draftKey);
+      if (!raw) return;
+      const draft = JSON.parse(raw) as Draft;
+      if (draft.step !== "intake" && draft.step !== "question") return;
+      setStep(draft.step);
+      setQuestionIndex(
+        Math.min(Math.max(draft.questionIndex, 0), QUESTIONS.length - 1),
+      );
+      setForm(draft.form);
+      setAnswers(draft.answers);
+    } catch {
+      // Corrupt draft — start fresh.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep the draft current while in progress; clear it once results show.
+  useEffect(() => {
+    try {
+      if (step === "intake" || step === "question") {
+        const draft: Draft = { step, questionIndex, form, answers };
+        window.sessionStorage.setItem(draftKey, JSON.stringify(draft));
+      } else if (step === "result") {
+        window.sessionStorage.removeItem(draftKey);
+      }
+    } catch {
+      // sessionStorage unavailable — persistence is best-effort only.
+    }
+  }, [step, questionIndex, form, answers, draftKey]);
 
   const formValid =
     form.name.trim().length > 0 &&
@@ -62,11 +113,28 @@ export default function AssessmentFlow({
     (!includeTrack || form.track !== "");
 
   function handleAnswer(id: QuestionId, value: number) {
+    if (advancingRef.current) return;
+    advancingRef.current = true;
+
     const nextAnswers = { ...answers, [id]: value };
     setAnswers(nextAnswers);
 
     if (questionIndex < QUESTIONS.length - 1) {
-      setTimeout(() => setQuestionIndex((i) => i + 1), 180);
+      setTimeout(() => {
+        setQuestionIndex((i) => i + 1);
+        advancingRef.current = false;
+      }, ADVANCE_MS);
+      return;
+    }
+
+    // Guard: every question must have a numeric answer before scoring —
+    // otherwise return the participant to the first unanswered one.
+    const firstMissing = QUESTIONS.findIndex(
+      (q) => typeof nextAnswers[q.id] !== "number",
+    );
+    if (firstMissing !== -1) {
+      setQuestionIndex(firstMissing);
+      advancingRef.current = false;
       return;
     }
 
@@ -77,7 +145,7 @@ export default function AssessmentFlow({
     sendToWebhook(webhookUrl, {
       moment,
       name: form.name.trim(),
-      email: form.email.trim(),
+      email: form.email.trim().toLowerCase(),
       batch: includeBatch ? form.batch : null,
       track: includeTrack ? form.track : null,
       timestamp: new Date().toISOString(),
@@ -88,7 +156,9 @@ export default function AssessmentFlow({
       system: computed.system,
     });
 
-    setTimeout(() => setStep("result"), 180);
+    // advancingRef stays true on purpose: the flow is complete and no
+    // further answer taps should register.
+    setTimeout(() => setStep("result"), ADVANCE_MS);
   }
 
   function goBack() {
@@ -127,6 +197,7 @@ export default function AssessmentFlow({
               <span className="text-sm font-medium text-foreground">Full Name</span>
               <input
                 type="text"
+                autoComplete="name"
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 placeholder="Juan Dela Cruz"
@@ -138,6 +209,10 @@ export default function AssessmentFlow({
               <span className="text-sm font-medium text-foreground">Email</span>
               <input
                 type="email"
+                inputMode="email"
+                autoComplete="email"
+                autoCapitalize="none"
+                spellCheck={false}
                 value={form.email}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                 placeholder="juan@email.com"
