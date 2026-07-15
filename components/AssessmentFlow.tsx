@@ -108,7 +108,7 @@ export default function AssessmentFlow({
           <button
             type="button"
             onClick={() => setStep("intake")}
-            className="mt-10 w-full rounded-full bg-accent px-8 py-4 text-lg font-semibold text-white shadow-sm transition-transform active:scale-[0.98]"
+            className="mt-10 w-full rounded-full bg-accent px-8 py-4 text-lg font-semibold text-on-accent shadow-sm transition-transform active:scale-[0.98]"
           >
             {beginLabel}
           </button>
@@ -130,7 +130,7 @@ export default function AssessmentFlow({
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 placeholder="Juan Dela Cruz"
-                className="rounded-xl border-2 border-border bg-white px-4 py-3.5 text-base text-foreground outline-none focus:border-accent"
+                className="rounded-xl border-2 border-border bg-card px-4 py-3.5 text-base text-foreground outline-none placeholder:text-muted focus:border-accent"
               />
             </label>
 
@@ -141,7 +141,7 @@ export default function AssessmentFlow({
                 value={form.email}
                 onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
                 placeholder="juan@email.com"
-                className="rounded-xl border-2 border-border bg-white px-4 py-3.5 text-base text-foreground outline-none focus:border-accent"
+                className="rounded-xl border-2 border-border bg-card px-4 py-3.5 text-base text-foreground outline-none placeholder:text-muted focus:border-accent"
               />
             </label>
 
@@ -151,7 +151,7 @@ export default function AssessmentFlow({
                 <select
                   value={form.batch}
                   onChange={(e) => setForm((f) => ({ ...f, batch: e.target.value }))}
-                  className="rounded-xl border-2 border-border bg-white px-4 py-3.5 text-base text-foreground outline-none focus:border-accent"
+                  className="rounded-xl border-2 border-border bg-card px-4 py-3.5 text-base text-foreground outline-none focus:border-accent"
                 >
                   <option value="" disabled>
                     Select your batch
@@ -171,7 +171,7 @@ export default function AssessmentFlow({
                 <select
                   value={form.track}
                   onChange={(e) => setForm((f) => ({ ...f, track: e.target.value }))}
-                  className="rounded-xl border-2 border-border bg-white px-4 py-3.5 text-base text-foreground outline-none focus:border-accent"
+                  className="rounded-xl border-2 border-border bg-card px-4 py-3.5 text-base text-foreground outline-none focus:border-accent"
                 >
                   <option value="" disabled>
                     Select your track
@@ -190,7 +190,7 @@ export default function AssessmentFlow({
             type="button"
             disabled={!formValid}
             onClick={() => setStep("question")}
-            className="mt-10 w-full rounded-full bg-accent px-8 py-4 text-lg font-semibold text-white shadow-sm transition-transform enabled:active:scale-[0.98] disabled:opacity-40"
+            className="mt-10 w-full rounded-full bg-accent px-8 py-4 text-lg font-semibold text-on-accent shadow-sm transition-transform enabled:active:scale-[0.98] disabled:opacity-40"
           >
             Continue
           </button>

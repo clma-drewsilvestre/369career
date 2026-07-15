@@ -21,13 +21,13 @@ export default function ScalePicker({ value, onSelect }: ScalePickerProps) {
             className={`flex w-full items-center gap-4 rounded-2xl border-2 px-5 py-4 text-left transition-all active:scale-[0.98] ${
               selected
                 ? "border-accent bg-accent-tint"
-                : "border-border bg-white"
+                : "border-border bg-card"
             }`}
           >
             <span
               className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 text-sm font-semibold ${
                 selected
-                  ? "border-accent bg-accent text-white"
+                  ? "border-accent bg-accent text-on-accent"
                   : "border-border text-muted"
               }`}
             >

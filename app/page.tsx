@@ -36,7 +36,7 @@ export default function Home() {
 
       {/* Hero */}
       <h1 className="mt-3 text-3xl font-bold leading-tight text-foreground">
-        Are you ready for your first job?
+        Ready to become a game changer?
       </h1>
       <p className="mt-4 text-base text-muted">
         The 369 Career Readiness Snapshot is a quick, honest check of how ready you
@@ -44,8 +44,11 @@ export default function Home() {
       </p>
 
       {/* What it is */}
-      <div className="mt-8 rounded-2xl bg-accent-tint p-5">
-        <p className="text-base text-foreground">
+      <div className="mt-8 rounded-2xl border-l-4 border-accent-2 bg-card p-5">
+        <p className="text-xs font-semibold uppercase tracking-wide text-accent-2">
+          What you&apos;ll get
+        </p>
+        <p className="mt-2 text-base text-foreground">
           In about 90 seconds, you&apos;ll get a readiness score from 0 to 100 —
           plus a look at the three things that help you land a job.
         </p>
@@ -59,9 +62,9 @@ export default function Home() {
         {FORCES.map((force, i) => (
           <div
             key={force.name}
-            className="flex gap-4 rounded-2xl border-2 border-border bg-white p-4"
+            className="flex gap-4 rounded-2xl border-2 border-border bg-card p-4"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-sm font-semibold text-white">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-sm font-semibold text-on-accent">
               {i + 1}
             </span>
             <div>
@@ -75,13 +78,14 @@ export default function Home() {
       {/* Who it's for */}
       <h2 className="mt-10 text-xl font-bold text-foreground">Who it&apos;s for</h2>
       <p className="mt-2 text-base text-muted">
-        Fresh TESDA graduates looking for their first job — across every track:
+        Tech-voc graduates ready for their next move — whether it&apos;s your first
+        job or a fresh start in a new field:
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
         {TRACKS.map((track) => (
           <span
             key={track}
-            className="rounded-full border-2 border-border bg-white px-4 py-2 text-sm font-medium text-foreground"
+            className="rounded-full border-2 border-border bg-card px-4 py-2 text-sm font-medium text-foreground"
           >
             {track}
           </span>
@@ -105,7 +109,7 @@ export default function Home() {
       <div className="mt-12 flex flex-col items-center">
         <Link
           href="/start"
-          className="w-full rounded-full bg-accent px-8 py-4 text-center text-lg font-semibold text-white shadow-sm transition-transform active:scale-[0.98]"
+          className="w-full rounded-full bg-accent px-8 py-4 text-center text-lg font-semibold text-on-accent shadow-sm transition-transform active:scale-[0.98]"
         >
           Start the 90-second snapshot
         </Link>
