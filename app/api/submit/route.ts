@@ -2,46 +2,11 @@ import { NextResponse } from "next/server";
 import { QUESTIONS, type Answers } from "@/lib/questions";
 import { computeScores, weakestForce } from "@/lib/scoring";
 import { bandFor } from "@/lib/bands";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const MAX_PER_WINDOW = 5;
-const WINDOW_MS = 10 * 60 * 1000;
-
-/**
- * Per-instance rate limiting.
- *
- * This is a speed bump, not a wall: serverless spreads requests across
- * instances, each with its own Map, and the whole thing resets on cold start.
- * It stops a naive loop from one tab. Before promoting the link anywhere
- * public, put real limiting in front of this — Vercel's firewall rules, or a
- * shared counter in Upstash/Vercel KV.
- */
-const hits = new Map<string, { count: number; resetAt: number }>();
-
-function rateLimited(ip: string): boolean {
-  const now = Date.now();
-  const entry = hits.get(ip);
-
-  if (!entry || now > entry.resetAt) {
-    hits.set(ip, { count: 1, resetAt: now + WINDOW_MS });
-    return false;
-  }
-
-  entry.count += 1;
-  return entry.count > MAX_PER_WINDOW;
-}
-
-/** Bounded cleanup so the Map can't grow without limit on a warm instance. */
-function sweep(): void {
-  if (hits.size < 5000) return;
-  const now = Date.now();
-  for (const [ip, entry] of hits) {
-    if (now > entry.resetAt) hits.delete(ip);
-  }
-}
 
 interface SubmitBody {
   submissionId?: unknown;
@@ -71,9 +36,12 @@ function parseAnswers(raw: unknown): Answers | null {
 export async function POST(req: Request) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
 
-  sweep();
-  if (rateLimited(ip)) {
-    return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
+  const limit = await checkRateLimit(ip);
+  if (!limit.ok) {
+    return NextResponse.json(
+      { ok: false, error: "rate_limited" },
+      { status: 429, headers: { "Retry-After": String(limit.retryAfter) } },
+    );
   }
 
   let body: SubmitBody;

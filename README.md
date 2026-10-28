@@ -136,10 +136,17 @@ retrying it forever.
 
 ## Before going public
 
-1. **Real rate limiting.** The limiter in `app/api/submit/route.ts` is
-   per-instance and resets on cold start — a speed bump, not a wall. Put Vercel
-   firewall rules or an Upstash/Vercel KV counter in front of it before
-   promoting the link anywhere.
+1. **Turn on durable rate limiting.** `lib/ratelimit.ts` has two backends and
+   picks at runtime. With `UPSTASH_REDIS_REST_URL` and
+   `UPSTASH_REDIS_REST_TOKEN` set it uses a shared Redis counter — the real
+   one. Without them it falls back to an in-memory Map that is per-instance and
+   wiped on every cold start, which is a speed bump, not a limit. Provision
+   Upstash Redis from the Vercel Marketplace (free tier is enough); it injects
+   both variables automatically and the limiter switches over on the next
+   deploy.
+
+   Vercel's WAF rate-limit rules would do this with no code at all, but they
+   require a Pro plan — this project is on Hobby.
 2. **Have a lawyer read `app/privacy/page.tsx`.** It is an honest description of
    what the code actually does, written against RA 10173, but it is a draft and
    not legal advice. Fill in the real operator name and privacy contact in
