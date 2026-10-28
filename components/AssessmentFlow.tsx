@@ -1,116 +1,106 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { QUESTIONS, type Answers, type QuestionId } from "@/lib/questions";
-import { computeScores } from "@/lib/scoring";
-import { retryQueuedWebhooks, sendToWebhook } from "@/lib/webhook";
+import { BRAND, RESULT_CTA } from "@/lib/brand";
+import { FORCES, QUESTIONS, type Answers, type QuestionId } from "@/lib/questions";
+import { computeScores, weakestForce, type Scores } from "@/lib/scoring";
+import { bandFor, forceWordFor } from "@/lib/bands";
+import {
+  DEEP_RECOMMENDATION,
+  DEEP_THRESHOLD,
+  RECOMMENDATIONS,
+} from "@/lib/recommendations";
+import { retryQueued, submit } from "@/lib/webhook";
 import ProgressBar from "./ProgressBar";
 import ScalePicker from "./ScalePicker";
 import ScoreRing from "./ScoreRing";
 import SubBar from "./SubBar";
 
-const BATCH_OPTIONS = ["Batch 1", "Batch 2", "Batch 3", "Batch 4"];
-const TRACK_OPTIONS = ["Barista", "Cookery", "Bread & Pastry", "Food & Beverage Services"];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DRAFT_KEY = "ai-readiness-draft";
 
-type Step = "landing" | "intake" | "question" | "result";
+/** Answering advances after a short delay; questions are one per screen. */
+const ADVANCE_MS = 180;
 
-interface AssessmentFlowProps {
-  moment: "start" | "end";
-  webhookUrl: string | undefined;
-  title: string;
-  description: string;
-  includeBatch: boolean;
-  includeTrack: boolean;
-  beginLabel?: string;
-  resultHeading: string;
-  resultCopy: string;
-}
+/**
+ * There is no landing step here on purpose — `/` does the selling, and a
+ * second "Begin" screen right after the first is pure friction.
+ */
+type Step = "question" | "result";
 
 interface FormState {
   name: string;
   email: string;
-  batch: string;
-  track: string;
+  consent: boolean;
 }
 
 interface Draft {
   step: Step;
   questionIndex: number;
-  form: FormState;
   answers: Partial<Answers>;
 }
 
-/** Answering advances after a short delay; questions are one per screen. */
-const ADVANCE_MS = 180;
+function recommendationFor(scores: Scores) {
+  const weakest = weakestForce(scores);
+  // Once every force clears the threshold, a weak-spot framing stops being a
+  // true description of the person in front of us.
+  if (scores[weakest] >= DEEP_THRESHOLD) return DEEP_RECOMMENDATION;
+  return RECOMMENDATIONS[weakest];
+}
 
-export default function AssessmentFlow({
-  moment,
-  webhookUrl,
-  title,
-  description,
-  includeBatch,
-  includeTrack,
-  beginLabel = "Begin",
-  resultHeading,
-  resultCopy,
-}: AssessmentFlowProps) {
-  const [step, setStep] = useState<Step>("landing");
+export default function AssessmentFlow() {
+  const [step, setStep] = useState<Step>("question");
   const [questionIndex, setQuestionIndex] = useState(0);
-  const [form, setForm] = useState<FormState>({ name: "", email: "", batch: "", track: "" });
   const [answers, setAnswers] = useState<Partial<Answers>>({});
-  const [scores, setScores] = useState<ReturnType<typeof computeScores> | null>(null);
+  const [scores, setScores] = useState<Scores | null>(null);
+  const [unlocked, setUnlocked] = useState(false);
+  const [form, setForm] = useState<FormState>({ name: "", email: "", consent: false });
 
   // Blocks double-taps during the answer -> advance transition. A second tap
-  // inside the window would otherwise advance twice (skipping a question) or
-  // submit twice on the final question.
+  // inside the window would otherwise skip a question or finish twice.
   const advancingRef = useRef(false);
 
-  const draftKey = `369-draft-${moment}`;
-
   useEffect(() => {
-    retryQueuedWebhooks();
+    retryQueued();
   }, []);
 
   // Restore an in-progress assessment after an accidental refresh.
-  // Runs once on mount (post-hydration, so no SSR mismatch).
+  //
+  // This has to run as an effect rather than as lazy initial state: the server
+  // render has no sessionStorage, so seeding state from it during render would
+  // be a hydration mismatch. React batches both updates into a single extra
+  // render, which is the cost of resuming at the right question.
   useEffect(() => {
     try {
-      const raw = window.sessionStorage.getItem(draftKey);
+      const raw = window.sessionStorage.getItem(DRAFT_KEY);
       if (!raw) return;
       const draft = JSON.parse(raw) as Draft;
-      if (draft.step !== "intake" && draft.step !== "question") return;
-      setStep(draft.step);
+      if (draft.step !== "question") return;
+      /* eslint-disable-next-line react-hooks/set-state-in-effect --
+         Restoring persisted state post-hydration; see comment above. */
       setQuestionIndex(
         Math.min(Math.max(draft.questionIndex, 0), QUESTIONS.length - 1),
       );
-      setForm(draft.form);
       setAnswers(draft.answers);
     } catch {
       // Corrupt draft — start fresh.
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep the draft current while in progress; clear it once results show.
+  // Keep the draft current while answering; clear it once the result shows.
   useEffect(() => {
     try {
-      if (step === "intake" || step === "question") {
-        const draft: Draft = { step, questionIndex, form, answers };
-        window.sessionStorage.setItem(draftKey, JSON.stringify(draft));
+      if (step === "question") {
+        const draft: Draft = { step, questionIndex, answers };
+        window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
       } else if (step === "result") {
-        window.sessionStorage.removeItem(draftKey);
+        window.sessionStorage.removeItem(DRAFT_KEY);
       }
     } catch {
       // sessionStorage unavailable — persistence is best-effort only.
     }
-  }, [step, questionIndex, form, answers, draftKey]);
-
-  const formValid =
-    form.name.trim().length > 0 &&
-    EMAIL_RE.test(form.email.trim()) &&
-    (!includeBatch || form.batch !== "") &&
-    (!includeTrack || form.track !== "");
+  }, [step, questionIndex, answers]);
 
   function handleAnswer(id: QuestionId, value: number) {
     if (advancingRef.current) return;
@@ -127,8 +117,8 @@ export default function AssessmentFlow({
       return;
     }
 
-    // Guard: every question must have a numeric answer before scoring —
-    // otherwise return the participant to the first unanswered one.
+    // Guard: every question needs a numeric answer before scoring — otherwise
+    // send them back to the first one they missed.
     const firstMissing = QUESTIONS.findIndex(
       (q) => typeof nextAnswers[q.id] !== "number",
     );
@@ -138,151 +128,59 @@ export default function AssessmentFlow({
       return;
     }
 
-    const finalAnswers = nextAnswers as Answers;
-    const computed = computeScores(finalAnswers);
-    setScores(computed);
-
-    sendToWebhook(webhookUrl, {
-      moment,
-      name: form.name.trim(),
-      email: form.email.trim().toLowerCase(),
-      batch: includeBatch ? form.batch : null,
-      track: includeTrack ? form.track : null,
-      timestamp: new Date().toISOString(),
-      answers: finalAnswers,
-      composite: computed.composite,
-      presence: computed.presence,
-      signal: computed.signal,
-      system: computed.system,
-    });
-
-    // advancingRef stays true on purpose: the flow is complete and no
+    setScores(computeScores(nextAnswers as Answers));
+    // advancingRef stays true on purpose: the questions are done and no
     // further answer taps should register.
     setTimeout(() => setStep("result"), ADVANCE_MS);
   }
 
   function goBack() {
-    if (step === "question" && questionIndex > 0) {
-      setQuestionIndex((i) => i - 1);
-    } else if (step === "question" && questionIndex === 0) {
-      setStep("intake");
-    }
+    if (step !== "question" || questionIndex === 0) return;
+    setQuestionIndex((i) => i - 1);
   }
+
+  const gateValid =
+    form.name.trim().length > 0 && EMAIL_RE.test(form.email.trim()) && form.consent;
+
+  function handleUnlock() {
+    if (!gateValid || !scores) return;
+    // Fire-and-forget: the breakdown must never wait on the network.
+    submit({
+      name: form.name.trim(),
+      email: form.email.trim().toLowerCase(),
+      consent: true,
+      timestamp: new Date().toISOString(),
+      answers: answers as Answers,
+    });
+    setUnlocked(true);
+  }
+
+  const band = scores ? bandFor(scores.composite) : null;
+  const recommendation = scores ? recommendationFor(scores) : null;
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 py-8">
-      {step === "landing" && (
-        <div className="flex flex-1 flex-col items-center justify-center text-center">
-          <h1 className="text-3xl font-bold leading-tight text-foreground">{title}</h1>
-          <p className="mt-4 text-base text-muted">{description}</p>
-          <button
-            type="button"
-            onClick={() => setStep("intake")}
-            className="mt-10 w-full rounded-full bg-accent px-8 py-4 text-lg font-semibold text-on-accent shadow-sm transition-transform active:scale-[0.98]"
-          >
-            {beginLabel}
-          </button>
-        </div>
-      )}
-
-      {step === "intake" && (
-        <div className="flex flex-1 flex-col">
-          <h2 className="text-2xl font-bold text-foreground">A few details first</h2>
-          <p className="mt-2 text-sm text-muted">
-            This is how we&apos;ll match your results later — no account needed.
-          </p>
-
-          <div className="mt-8 flex flex-col gap-5">
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-medium text-foreground">Full Name</span>
-              <input
-                type="text"
-                autoComplete="name"
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="Juan Dela Cruz"
-                className="rounded-xl border-2 border-border bg-card px-4 py-3.5 text-base text-foreground outline-none placeholder:text-muted focus:border-accent"
-              />
-            </label>
-
-            <label className="flex flex-col gap-2">
-              <span className="text-sm font-medium text-foreground">Email</span>
-              <input
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                autoCapitalize="none"
-                spellCheck={false}
-                value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="juan@email.com"
-                className="rounded-xl border-2 border-border bg-card px-4 py-3.5 text-base text-foreground outline-none placeholder:text-muted focus:border-accent"
-              />
-            </label>
-
-            {includeBatch && (
-              <label className="flex flex-col gap-2">
-                <span className="text-sm font-medium text-foreground">Batch</span>
-                <select
-                  value={form.batch}
-                  onChange={(e) => setForm((f) => ({ ...f, batch: e.target.value }))}
-                  className="rounded-xl border-2 border-border bg-card px-4 py-3.5 text-base text-foreground outline-none focus:border-accent"
-                >
-                  <option value="" disabled>
-                    Select your batch
-                  </option>
-                  {BATCH_OPTIONS.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {includeTrack && (
-              <label className="flex flex-col gap-2">
-                <span className="text-sm font-medium text-foreground">Track</span>
-                <select
-                  value={form.track}
-                  onChange={(e) => setForm((f) => ({ ...f, track: e.target.value }))}
-                  className="rounded-xl border-2 border-border bg-card px-4 py-3.5 text-base text-foreground outline-none focus:border-accent"
-                >
-                  <option value="" disabled>
-                    Select your track
-                  </option>
-                  {TRACK_OPTIONS.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-          </div>
-
-          <button
-            type="button"
-            disabled={!formValid}
-            onClick={() => setStep("question")}
-            className="mt-10 w-full rounded-full bg-accent px-8 py-4 text-lg font-semibold text-on-accent shadow-sm transition-transform enabled:active:scale-[0.98] disabled:opacity-40"
-          >
-            Continue
-          </button>
-        </div>
-      )}
-
       {step === "question" && (
         <div className="flex flex-1 flex-col">
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={goBack}
-              aria-label="Back"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-border"
-            >
-              ←
-            </button>
+            {questionIndex > 0 ? (
+              <button
+                type="button"
+                onClick={goBack}
+                aria-label="Back"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-border"
+              >
+                &larr;
+              </button>
+            ) : (
+              <Link
+                href="/"
+                aria-label="Back"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-border"
+              >
+                &larr;
+              </Link>
+            )}
             <div className="flex-1">
               <ProgressBar current={questionIndex + 1} total={QUESTIONS.length} />
             </div>
@@ -302,21 +200,129 @@ export default function AssessmentFlow({
         </div>
       )}
 
-      {step === "result" && scores && (
-        <div className="flex flex-1 flex-col items-center py-4 text-center">
-          <h2 className="text-2xl font-bold text-foreground">{resultHeading}</h2>
-
-          <div className="mt-8">
-            <ScoreRing score={scores.composite} label="Career Readiness Score" />
+      {step === "result" && scores && band && recommendation && (
+        <div className="flex flex-1 flex-col items-center py-4">
+          <div className="flex flex-col items-center text-center">
+            <ScoreRing score={scores.composite} label="AI Readiness Score" />
+            <p className="mt-6 text-2xl font-bold text-accent">{band.name}</p>
           </div>
 
-          <div className="mt-10 flex w-full flex-col gap-5">
-            <SubBar label="Presence" value={scores.presence} delayMs={200} />
-            <SubBar label="Signal" value={scores.signal} delayMs={350} />
-            <SubBar label="System" value={scores.system} delayMs={500} />
-          </div>
+          {!unlocked && (
+            <div className="mt-10 w-full rounded-2xl border-2 border-border bg-card p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-accent-2">
+                Your breakdown
+              </p>
+              <p className="mt-2 text-base text-foreground">
+                See which of the three forces is holding your score down — and the
+                three things to do about it this week.
+              </p>
 
-          <p className="mt-10 text-sm font-medium text-accent-dark">{resultCopy}</p>
+              <div className="mt-6 flex flex-col gap-4">
+                <label className="flex flex-col gap-2">
+                  <span className="text-sm font-medium text-foreground">Full Name</span>
+                  <input
+                    type="text"
+                    autoComplete="name"
+                    value={form.name}
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                    className="rounded-xl border-2 border-border bg-background px-4 py-3.5 text-base text-foreground outline-none placeholder:text-muted focus:border-accent"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-2">
+                  <span className="text-sm font-medium text-foreground">Email</span>
+                  <input
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    value={form.email}
+                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                    className="rounded-xl border-2 border-border bg-background px-4 py-3.5 text-base text-foreground outline-none placeholder:text-muted focus:border-accent"
+                  />
+                </label>
+
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={form.consent}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, consent: e.target.checked }))
+                    }
+                    className="mt-1 h-5 w-5 shrink-0"
+                  />
+                  <span className="text-sm leading-snug text-muted">
+                    I agree to {BRAND.operator} storing my answers and contacting me
+                    about my results, as described in the{" "}
+                    <Link href="/privacy" className="underline hover:text-foreground">
+                      Privacy Policy
+                    </Link>
+                    .
+                  </span>
+                </label>
+              </div>
+
+              <button
+                type="button"
+                disabled={!gateValid}
+                onClick={handleUnlock}
+                className="mt-6 w-full rounded-full bg-accent px-8 py-4 text-lg font-semibold text-on-accent shadow-sm transition-transform enabled:active:scale-[0.98] disabled:opacity-40"
+              >
+                Show my breakdown
+              </button>
+            </div>
+          )}
+
+          {unlocked && (
+            <>
+              <div className="mt-10 flex w-full flex-col gap-5">
+                {FORCES.map((force, i) => (
+                  <SubBar
+                    key={force.id}
+                    label={force.name}
+                    value={scores[force.id]}
+                    caption={forceWordFor(scores[force.id])}
+                    delayMs={200 + i * 150}
+                  />
+                ))}
+              </div>
+
+              <div className="mt-10 w-full rounded-2xl border-l-4 border-accent-2 bg-card p-5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-accent-2">
+                  {recommendation.heading}
+                </p>
+                <p className="mt-3 text-sm leading-relaxed text-muted">{band.blurb}</p>
+                <ol className="mt-5 flex flex-col gap-4">
+                  {recommendation.actions.map((action, i) => (
+                    <li key={i} className="flex gap-3">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-accent text-xs font-semibold text-accent">
+                        {i + 1}
+                      </span>
+                      <span className="pt-0.5 text-sm leading-relaxed text-foreground">
+                        {action}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              <div className="mt-10 w-full text-center">
+                <p className="text-base font-semibold text-foreground">
+                  {RESULT_CTA.heading}
+                </p>
+                <p className="mt-2 text-sm text-muted">{RESULT_CTA.copy}</p>
+                {RESULT_CTA.href && RESULT_CTA.buttonLabel && (
+                  <a
+                    href={RESULT_CTA.href}
+                    className="mt-6 inline-block w-full rounded-full bg-accent px-8 py-4 text-lg font-semibold text-on-accent shadow-sm transition-transform active:scale-[0.98]"
+                  >
+                    {RESULT_CTA.buttonLabel}
+                  </a>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

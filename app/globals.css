@@ -44,3 +44,7 @@ body {
 * {
   -webkit-tap-highlight-color: transparent;
 }
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}

@@ -1,67 +1,47 @@
 import Link from "next/link";
-
-const FORCES = [
-  {
-    name: "Presence",
-    blurb:
-      "How you carry yourself. Walking into an interview, staying calm during a rush, bouncing back after a mistake.",
-  },
-  {
-    name: "Signal",
-    blurb:
-      "The impression you give. Your resume, your online profile, and the first impression you make.",
-  },
-  {
-    name: "System",
-    blurb:
-      "How consistently you show up. Applications sent, follow-ups made, and practice repeated.",
-  },
-];
-
-const TRACKS = ["Barista", "Cookery", "Bread & Pastry", "Food & Beverage Services"];
+import { BRAND } from "@/lib/brand";
+import { FORCES } from "@/lib/questions";
+import { BANDS } from "@/lib/bands";
 
 const STEPS = [
   "Answer 9 short questions — about 90 seconds.",
   "See your readiness score, out of 100.",
-  "Screenshot it, then keep working on your job search.",
+  "Get the one force holding you back, and three things to do this week.",
 ];
 
 export default function Home() {
   return (
     <div className="mx-auto flex w-full max-w-md flex-1 flex-col px-6 py-10">
-      {/* Eyebrow */}
       <p className="text-xs font-semibold uppercase tracking-wide text-accent-dark">
-        CLMA · From Graduate to Game Changer
+        {BRAND.name}
       </p>
 
-      {/* Hero */}
       <h1 className="mt-3 text-3xl font-bold leading-tight text-foreground">
-        Ready to become a game changer?
+        How ready are you, really?
       </h1>
       <p className="mt-4 text-base text-muted">
-        The 369 Career Readiness Snapshot is a quick, honest check of how ready you
-        are to get hired — no login, no right or wrong answers.
+        Most people can&apos;t tell whether they&apos;re genuinely working with AI or
+        just occasionally poking at it. This is an honest read — no login, no right
+        or wrong answers.
       </p>
 
-      {/* What it is */}
       <div className="mt-8 rounded-2xl border-l-4 border-accent-2 bg-card p-5">
         <p className="text-xs font-semibold uppercase tracking-wide text-accent-2">
           What you&apos;ll get
         </p>
         <p className="mt-2 text-base text-foreground">
-          In about 90 seconds, you&apos;ll get a readiness score from 0 to 100 —
-          plus a look at the three things that help you land a job.
+          A readiness score from 0 to 100, which of the three forces is dragging it
+          down, and three specific things to do about it this week.
         </p>
       </div>
 
-      {/* The 3 things it checks */}
       <h2 className="mt-10 text-xl font-bold text-foreground">
         The 3 things it checks
       </h2>
       <div className="mt-4 flex flex-col gap-3">
         {FORCES.map((force, i) => (
           <div
-            key={force.name}
+            key={force.id}
             className="flex gap-4 rounded-2xl border-2 border-border bg-card p-4"
           >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-sm font-semibold text-on-accent">
@@ -75,24 +55,28 @@ export default function Home() {
         ))}
       </div>
 
-      {/* Who it's for */}
-      <h2 className="mt-10 text-xl font-bold text-foreground">Who it&apos;s for</h2>
+      <h2 className="mt-10 text-xl font-bold text-foreground">Where you&apos;ll land</h2>
       <p className="mt-2 text-base text-muted">
-        Tech-voc graduates ready for their next move — whether it&apos;s your first
-        job or a fresh start in a new field:
+        Everyone comes out somewhere on this ladder. Most people are further down it
+        than they expect.
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
-        {TRACKS.map((track) => (
+        {BANDS.map((band) => (
           <span
-            key={track}
+            key={band.name}
             className="rounded-full border-2 border-border bg-card px-4 py-2 text-sm font-medium text-foreground"
           >
-            {track}
+            {band.name}
           </span>
         ))}
       </div>
 
-      {/* How it works */}
+      <h2 className="mt-10 text-xl font-bold text-foreground">Who it&apos;s for</h2>
+      <p className="mt-2 text-base text-muted">
+        Anyone whose work is mostly thinking, writing, deciding or organising — and
+        who suspects their field is changing faster than they are.
+      </p>
+
       <h2 className="mt-10 text-xl font-bold text-foreground">How it works</h2>
       <ol className="mt-4 flex flex-col gap-4">
         {STEPS.map((step, i) => (
@@ -105,10 +89,9 @@ export default function Home() {
         ))}
       </ol>
 
-      {/* Final CTA */}
       <div className="mt-12 flex flex-col items-center">
         <Link
-          href="/start"
+          href="/assessment"
           className="w-full rounded-full bg-accent px-8 py-4 text-center text-lg font-semibold text-on-accent shadow-sm transition-transform active:scale-[0.98]"
         >
           Start the 90-second snapshot
@@ -117,6 +100,12 @@ export default function Home() {
           No login. No right or wrong answers.
         </p>
       </div>
+
+      <footer className="mt-16 border-t border-border pt-6 text-center">
+        <Link href="/privacy" className="text-sm text-muted hover:text-foreground">
+          Privacy Policy
+        </Link>
+      </footer>
     </div>
   );
 }

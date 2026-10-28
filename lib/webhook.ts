@@ -1,28 +1,26 @@
-const QUEUE_KEY = "369-webhook-queue";
-const TIMEOUT_MS = 5000;
+import type { Answers } from "./questions";
 
-export interface WebhookPayload {
+const QUEUE_KEY = "ai-readiness-queue";
+const TIMEOUT_MS = 8000;
+
+/** Same-origin route handler. The upstream webhook URL never reaches the browser. */
+const SUBMIT_URL = "/api/submit";
+
+export interface SubmitPayload {
   submissionId: string;
-  moment: "start" | "end";
   name: string;
   email: string;
-  batch: string | null;
-  track: string | null;
+  consent: true;
   timestamp: string;
-  answers: Record<string, number>;
-  composite: number;
-  presence: number;
-  signal: number;
-  system: number;
+  answers: Answers;
 }
 
-/** Payload as built by the UI — submissionId is stamped by sendToWebhook. */
-export type OutgoingPayload = Omit<WebhookPayload, "submissionId">;
+/** Payload as built by the UI — submissionId is stamped by submit(). */
+export type OutgoingPayload = Omit<SubmitPayload, "submissionId">;
 
 interface QueuedItem {
   id: string;
-  url: string;
-  payload: WebhookPayload;
+  payload: SubmitPayload;
   queuedAt: string;
 }
 
@@ -61,22 +59,27 @@ function removeFromQueue(id: string): void {
   writeQueue(readQueue().filter((item) => item.id !== id));
 }
 
-async function postWithTimeout(url: string, payload: WebhookPayload): Promise<boolean> {
+async function post(payload: SubmitPayload): Promise<"ok" | "retry" | "drop"> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const res = await fetch(SUBMIT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       signal: controller.signal,
-      // Lets the request survive the page being backgrounded/closed —
-      // participants lock their phone right after the score reveal.
+      // Lets the request survive the page being backgrounded or closed —
+      // people lock their phone the moment the score appears.
       keepalive: true,
     });
-    return res.ok;
+
+    if (res.ok) return "ok";
+    // 4xx means this payload will never be accepted; retrying it forever
+    // would just pin a bad item at the head of the queue.
+    if (res.status >= 400 && res.status < 500 && res.status !== 429) return "drop";
+    return "retry";
   } catch {
-    return false;
+    return "retry";
   } finally {
     clearTimeout(timer);
   }
@@ -86,35 +89,33 @@ async function postWithTimeout(url: string, payload: WebhookPayload): Promise<bo
  * Fire-and-forget: never await this in the UI.
  *
  * Write-ahead delivery: the payload is queued in localStorage BEFORE the
- * request goes out and removed only on confirmed success, so a killed page
- * or failed request can never lose it — worst case it is re-sent on the
- * next page load. The stamped submissionId makes re-sends safe to dedupe
- * downstream (same submission ⇒ same id).
+ * request goes out and removed only once it is confirmed delivered or
+ * confirmed unacceptable, so a killed page can't lose it — worst case it is
+ * re-sent on a later page load. The stamped submissionId makes re-sends safe
+ * to dedupe downstream (same submission => same id).
  */
-export function sendToWebhook(url: string | undefined, outgoing: OutgoingPayload): void {
-  if (!url) return;
-  const payload: WebhookPayload = { ...outgoing, submissionId: makeId() };
+export function submit(outgoing: OutgoingPayload): void {
+  const payload: SubmitPayload = { ...outgoing, submissionId: makeId() };
   const item: QueuedItem = {
     id: payload.submissionId,
-    url,
     payload,
     queuedAt: new Date().toISOString(),
   };
   enqueue(item);
-  postWithTimeout(url, payload).then((ok) => {
-    if (ok) removeFromQueue(item.id);
+  post(payload).then((result) => {
+    if (result !== "retry") removeFromQueue(item.id);
   });
 }
 
 let retryInFlight = false;
 
 /**
- * Attempts to resend any queued payloads from a previous failed submission.
- * Safe to call on every page load; it's a no-op when the queue is empty.
- * Each success removes only its own item from the live queue, so items
- * enqueued while retries are in flight are never clobbered.
+ * Resends anything left over from an earlier failed submission. Safe to call
+ * on every page load; a no-op when the queue is empty. Each success removes
+ * only its own item from the live queue, so items enqueued while retries are
+ * in flight are never clobbered.
  */
-export function retryQueuedWebhooks(): void {
+export function retryQueued(): void {
   if (retryInFlight) return;
   const items = readQueue();
   if (items.length === 0) return;
@@ -122,8 +123,8 @@ export function retryQueuedWebhooks(): void {
 
   let settled = 0;
   items.forEach((item) => {
-    postWithTimeout(item.url, item.payload).then((ok) => {
-      if (ok) removeFromQueue(item.id);
+    post(item.payload).then((result) => {
+      if (result !== "retry") removeFromQueue(item.id);
       settled += 1;
       if (settled === items.length) retryInFlight = false;
     });
